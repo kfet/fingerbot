@@ -2,7 +2,7 @@
 name = "fingerbot"
 version = "0.2.0"
 description = "Press a Tuya Fingerbot over BLE. One command, no arguments."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "bleak>=3.0.2",
     "pycryptodome>=3.23.0",
