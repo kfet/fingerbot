@@ -1,6 +1,6 @@
 [project]
 name = "fingerbot"
-version = "0.2.0"
+version = "0.2.1"
 description = "Press a Tuya Fingerbot over BLE. One command, no arguments."
 requires-python = ">=3.12"
 dependencies = [
