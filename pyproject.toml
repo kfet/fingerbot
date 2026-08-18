@@ -1,0 +1,51 @@
+[project]
+name = "fingerbot"
+version = "0.2.0"
+description = "Press a Tuya Fingerbot over BLE. One command, no arguments."
+requires-python = ">=3.11"
+dependencies = [
+    "bleak>=3.0.2",
+    "pycryptodome>=3.23.0",
+    "tuya-ble>=0.1.0",
+]
+
+[project.scripts]
+fingerbot = "fingerbot:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=fingerbot --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+branch = true
+source = ["fingerbot"]
+
+[tool.pyrefly]
+# pytest puts tests/ on sys.path (there is no tests/__init__.py), so conftest
+# is importable by name at run time; pyrefly needs telling.
+search-path = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+
+[dependency-groups]
+dev = [
+    "pyrefly>=1.2.0,<2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.3",
+    "ty>=0.0.72,<0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/kfet/fingerbot"
+Repository = "https://github.com/kfet/fingerbot"

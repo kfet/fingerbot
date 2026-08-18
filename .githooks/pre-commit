@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-commit gate: ruff, ty, pyrefly, pytest (100% coverage).
+#
+# Enable in a fresh clone with one command:
+#     git config core.hooksPath .githooks
+#
+# Bypass a single commit with `git commit --no-verify`.
+#
+# NOTE: this checks the working tree, not the staged snapshot. If you stage
+# only some of your changes, the gate reports on what is on disk. That is the
+# deliberate trade: no stashing, so the hook can never lose your work.
+set -e
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv not found on PATH -- skipping gate." >&2
+    echo "install uv, or commit with --no-verify." >&2
+    exit 1
+fi
+
+exec uv run scripts/check.py
