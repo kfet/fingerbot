@@ -13,28 +13,30 @@ protocol, so it needs no cloud connection and no Tuya gateway at run time —
 only the four per-device credentials you fetch once from the Tuya IoT
 platform (see [Configure](#configure)).
 
-Developed against a Fingerbot Plus (`category: kg`, product `6jcvqwh0`), but
+Developed against a Fingerbot Plus (`category: kg`), but
 nothing in it is model-specific beyond datapoint 108; any Tuya Fingerbot that
 exposes a momentary "click" datapoint should work.
 
-Requires Linux with BlueZ — it uses `bleak`'s BlueZ backend and BlueZ D-Bus
-object paths.
+Requires Linux with a Bluetooth LE controller and `python3` 3.9 or newer.
+Nothing else: it is one file, standard library only — no pip, no `bleak`,
+no D-Bus, no root.
 
 ## Install
 
-```
-uv tool install git+https://github.com/kfet/fingerbot
-```
-
-or, from a clone:
+Copy one file:
 
 ```
-uv tool install .
+curl -fsSLo ~/.local/bin/fingerbot \
+  https://raw.githubusercontent.com/kfet/fingerbot/main/src/fingerbot/__init__.py
+chmod +x ~/.local/bin/fingerbot
 ```
 
-`uv tool install` materialises a self-contained venv under
-`~/.local/share/uv/tools`, so afterwards the command runs with no network and
-no git access. Update with `uv tool upgrade fingerbot`.
+or `scp src/fingerbot/__init__.py host:fingerbot.py` and run it as
+`python3 fingerbot.py`. Then add the credentials file (below). That is the
+whole install — the box needs no network at run time.
+
+It is also an ordinary package, if you prefer: `uv tool install
+git+https://github.com/kfet/fingerbot` gives the same `fingerbot` command.
 
 ## Configure
 
@@ -48,12 +50,28 @@ FB_LOCAL_KEY=...
 FB_UUID=...
 FB_PRODUCT_ID=...
 FB_CATEGORY=kg
+#FB_ADDR_TYPE=public
 #FB_ADAPTER=hci0
 ```
 
-`FB_MAC` and `FB_LOCAL_KEY`, `FB_DEVICE_ID`, `FB_UUID` are required;
-`FB_PRODUCT_ID`, `FB_CATEGORY` (default `kg`) and `FB_ADAPTER` (default
-`hci0`) are optional.
+Optional calibration, re-written before every click (`FB_TRAVEL` enables it):
+
+```
+FB_TRAVEL=74   # dp102, down travel % (the app's "Downward movement")
+FB_HOLD=0      # dp103, sustain; >0 can park the arm on the button
+FB_MODE=0      # dp101, 0 = click
+```
+
+Travel is nudged one step off and back before it is set, because the device
+does not reliably honour a stored calibration on a cold click. The press is
+refused, before connecting, if a value is out of range (travel 0–100), and
+after logging in if the calibration datapoints are not published.
+
+`FB_MAC` and `FB_LOCAL_KEY`, `FB_DEVICE_ID`, `FB_UUID` are required.
+Optional: `FB_ADDR_TYPE` (`public`, the default, or `random` — the LE
+address type; `bluetoothctl info <mac>` shows it), `FB_ADAPTER` (`hci0`,
+`hci1`, …; default: let the kernel pick), and `FB_PRODUCT_ID` /
+`FB_CATEGORY`, which are informational.
 
 ### Getting the four Tuya credentials
 
@@ -76,16 +94,11 @@ it if presses suddenly stop working.
 
 ## One-time host setup
 
-```
-bluetoothctl trust <FB_MAC>
-```
-
-The Fingerbot will not bond — `pair()` returns
-`org.bluez.Error.AuthenticationFailed`, because Tuya encrypts at the
-application layer with `local_key`, so there is nothing to bond at the link
-layer. Trusting it is enough: it gives a persistent BlueZ object path, which
-the tool connects to directly, without scanning. That keeps it out of
-contention with anything else using the adapter.
+None. There is nothing to pair, trust or bond: the Fingerbot does not bond
+anyway (Tuya encrypts at the application layer with `local_key`), and the
+tool does not go through BlueZ's D-Bus device objects, so there is no cached
+object to create or to go stale. `bluetoothd` may keep running; it just sees
+a connection come and go.
 
 ## Usage
 
@@ -94,26 +107,39 @@ fingerbot           # click once (same as `fingerbot press`)
 fingerbot info      # diagnostics; never actuates the arm
 ```
 
-`fingerbot info` prints the resolved config (with `local_key` redacted), the
-adapter state, whether BlueZ still has the device cached and trusted, a 12 s
-RSSI measurement, which connect path was taken and how long it took, and the
-full datapoint map.
+`fingerbot info` prints the resolved config (`local_key` redacted to its
+length; `uuid` and `device_id` are identifiers and print in clear), how long
+the connection and GATT discovery took, the device's firmware and protocol
+versions, every Tuya frame it sent (so you can see there was no datapoint
+write), and the full datapoint map. It is read-only by construction: its session refuses to send
+a datapoint write at all.
+
+Exit status of a press: `0` and `clicked` — the click was acknowledged.
+`3` — the click frame was sent (at least partly) and then the session failed
+or was interrupted, so the arm may have moved; check the host before pressing
+again. Any other non-zero status — the press failed before any of the click
+frame was sent (calibration writes may have gone out).
 
 Retries, scheduling and "should I press?" logic belong to whatever calls
 this, not here.
 
 ## How it works
 
-1. **Fast path** — connect straight to `/org/bluez/hci0/dev_<MAC>`, the
-   trusted cached object. No discovery, so nothing to arbitrate with other
-   BLE users on the host. Typically 9–18 s, most of it the BLE connection
-   itself; the device sleeps between commands.
-2. **Slow path** — if that fails, the cached object is stale or absent.
-   Rediscover with the scanner held *open* (BlueZ evicts un-paired devices
-   the moment discovery stops), connect, and thereby repopulate the cached
-   object so the fast path works again next time.
-3. Write datapoint **108**, the momentary click DP: one write, one actuation.
+1. **Connect** — open an L2CAP socket on the LE ATT channel (CID 4) to
+   `FB_MAC`. The kernel scans passively and connects; no discovery session,
+   nothing to arbitrate with other BLE users on the host. About 1.5 s on a
+   Pi Zero W.
+2. **GATT** — find service `1910`, its `2b11` write characteristic and
+   `2b10` notify characteristic, and enable notifications.
+3. **Log in** — Tuya BLE v3: device info (gives the session key), pair,
+   status request. The device then reports every datapoint. Frames are
+   AES-128-CBC with keys derived from `local_key`; the AES is pure Python.
+4. **Press** — re-write the calibration datapoints (see Configure), then
+   write datapoint **108**, the momentary click DP: one write, one actuation.
    `dp1` is the latching switch state — writing that presses twice.
+
+The whole `info` round trip, connect to datapoint dump, takes under 5 s on a
+Pi Zero W (armv6).
 
 Datapoint map dumped from a live Fingerbot Plus:
 
@@ -125,10 +151,11 @@ Datapoint map dumped from a live Fingerbot Plus:
 104  enum   reverse
 106  value  up position %
 108  bool   click            <- this one
-111  value  battery %
+111  value  unknown -- NOT battery (reads 256 on a healthy cell)
 ```
 
-Set travel and hold time in the Smart Life app; this tool only clicks.
+Travel, hold and mode come from `device.env` and are re-written before every
+click; everything else is the Smart Life app's business.
 
 ## Troubleshooting
 
@@ -136,11 +163,10 @@ Run `fingerbot info` first — it separates the common failures:
 
 | symptom in `info` | cause | fix |
 |---|---|---|
-| no adverts seen | out of range, or dead CR2 cell | move closer; replace the cell |
-| adverts fine, fast path times out, slow path recovers | stale BlueZ cached object | nothing — it self-heals; the next press uses the fast path again |
-| `org.bluez.Error.InProgress` | another process holds discovery | stop it, or let the fast path handle it (it does not scan) |
-| `dp108 never appeared` | wrong `local_key` (decryption fails silently) | refetch `local_key` from the Tuya API |
-| absent from BlueZ cache | never trusted, or cache cleared | `bluetoothctl trust <FB_MAC>` |
+| `LE connect ... timed out` | out of range, dead CR2 cell, or the Smart Life app holds the link | move closer; replace the cell; close the app |
+| `ProtocolError: ... (wrong local_key?)` | wrong `local_key` | refetch `local_key` from the Tuya API |
+| `no response to Tuya code 0x0000` | wrong `local_key` (the device ignores the login) | as above |
+| `dp108 never appeared` | logged in, but the device reported no click DP | not a Fingerbot, or a different firmware |
 
 Working RSSI is roughly −38 to −60 dBm in the same room; around −80 dBm it
 stops connecting reliably. The vendor manual specifies a minimum of 10 s
@@ -148,13 +174,12 @@ between presses.
 
 ## Dependencies
 
-`tuya-ble` on PyPI is a 2023 snapshot extracted from
-[`PlusPlus-ua/ha_tuya_ble`](https://github.com/PlusPlus-ua/ha_tuya_ble).
-There is no official Tuya BLE SDK for Python: the `tuya` GitHub org ships C
-firmware for the device MCU under that name, and the official Python SDKs are
-cloud-REST only, which would require a Tuya Bluetooth gateway. The protocol
-is frozen device firmware, so a stale codec is not a rotting dependency.
-`tuya-ble` under-declares `pycryptodome`, hence the explicit dependency here.
+None at run time. The Tuya BLE protocol and AES-128 are implemented in the
+module itself. The protocol follows `tuya-ble` on PyPI (a 2023 snapshot of
+[`PlusPlus-ua/ha_tuya_ble`](https://github.com/PlusPlus-ua/ha_tuya_ble)); it
+is frozen device firmware, so it does not rot. `tuya-ble` and `pycryptodome`
+remain as dev-only dependencies: the test suite cross-checks the AES and the
+Tuya codec against them byte for byte.
 
 ## Development
 
@@ -169,6 +194,13 @@ the first failure and names it. It is the *only* definition of the gate:
 CI runs that same script, and so does the pre-commit hook, so the three can
 never drift apart. Standard library only — `uv sync` is the whole setup.
 
+The module must keep running on Python 3.9; run the gate there too (CI
+does):
+
+```
+UV_PROJECT_ENVIRONMENT=/tmp/fb-venv39 uv run --python 3.9 scripts/check.py
+```
+
 Individual steps, when you want just one:
 
 ```
@@ -178,12 +210,13 @@ uv run pyrefly check   # type check (Meta)
 uv run pytest          # 100% coverage, enforced
 ```
 
-The test suite mocks `bleak`, `tuya_ble` and `subprocess`, so it needs no
-Bluetooth adapter and no hardware; it passes on any host.
+The test suite replaces the Bluetooth socket with a fake Fingerbot that
+speaks ATT and Tuya BLE v3, so it needs no Bluetooth adapter and no
+hardware; it passes on any host.
 
 Two type checkers, deliberately: they are both pre-1.0 and they disagree in
 useful ways, so a finding from either is worth reading. Source and tests are
-both checked. CI runs the gate on Python 3.11, 3.12 and 3.13.
+both checked. CI runs the gate on Python 3.9 and 3.13.
 
 ## Licence
 

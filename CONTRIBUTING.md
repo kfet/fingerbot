@@ -2,14 +2,29 @@
 
 Only the non-obvious things.
 
-- **uv only.** `uv sync`, `uv run`, `uv add`. The build backend is `uv_build`
-  and stays that way; no hatchling, no hand-rolled venvs, no `pip install`,
-  no distro Python packages (distro `bleak` is 2.x, and this needs 3.x, whose
-  API differs materially).
-- **The test suite must never touch a radio.** `bleak`, `tuya_ble` and
-  `subprocess.run` are all mocked in `tests/conftest.py`; tests pass on a host
-  with no Bluetooth controller at all. If a change makes something testable
-  only against real hardware, restructure the change.
+- **The runtime is one file, standard library only, Python 3.9+.**
+  `src/fingerbot/__init__.py` is deployed by copying it alone, so it may not
+  import anything outside the stdlib, may not import a sibling module, and
+  must parse and run on 3.9 (no `match`, no `X | Y` outside annotations, no
+  `zip(strict=)`; ruff targets py39 to catch these). `dependencies = []`
+  stays empty. Run the whole gate under 3.9 before merging, as CI does:
+
+  ```
+  UV_PROJECT_ENVIRONMENT=/tmp/fb-venv39 uv run --python 3.9 scripts/check.py
+  ```
+
+  The tuya-ble cross-checks skip there (it needs 3.10+), so tests must reach
+  it and bleak only through `pytest.importorskip`; everything else, including
+  100% coverage and both type checkers, must pass.
+- **uv only for development.** `uv sync`, `uv run`, `uv add`. The build
+  backend is `uv_build` and stays that way. `pycryptodome` and `tuya-ble` are
+  dev-only reference implementations the tests cross-check against; never
+  import them from the module.
+- **The test suite must never touch a radio.** `tests/conftest.py` replaces
+  the L2CAP socket with `FakeLink`, behind which `FakeFingerbot` speaks ATT
+  and Tuya BLE v3 and records every frame it receives. An autouse fixture
+  makes any call to the real `att_connect` fail. If a change makes something
+  testable only against real hardware, restructure the change.
 - **One command runs everything**: `uv run scripts/check.py` — ruff, ty,
   pyrefly, pytest, in that order, stopping at the first failure and naming it.
   Do not add a step to CI or to the hook; add it to `scripts/check.py`, which
@@ -41,7 +56,12 @@ Only the non-obvious things.
   no cover`.
 - **Do not write `dp1` to actuate.** It is the latching switch state, and
   writing it makes the arm press twice. `dp108` is the momentary click.
-- **`fingerbot info` must never actuate.** There is a test asserting that no
-  datapoint is assigned on the info path; keep it true.
+- **`fingerbot info` must never actuate.** `Session(actuate=False)` (the
+  default) refuses `FUN_SENDER_DPS` and every code off a short read-only
+  allow-list, before anything reaches the socket. `actuate` is keyword-only;
+  only `press()` passes `actuate=True`, and an AST test fails if any other
+  call site does. Tests
+  also run `info` end to end against the fake device and assert it received
+  no datapoint write. Keep all of that true.
 - Scope: this tool clicks once and exits. Retries, scheduling and policy
   ("should I press?") belong to the caller.

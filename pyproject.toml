@@ -1,13 +1,10 @@
 [project]
 name = "fingerbot"
 version = "0.2.1"
-description = "Press a Tuya Fingerbot over BLE. One command, no arguments."
-requires-python = ">=3.12"
-dependencies = [
-    "bleak>=3.0.2",
-    "pycryptodome>=3.23.0",
-    "tuya-ble>=0.1.0",
-]
+description = "Press a Tuya Fingerbot over BLE. One command, no arguments, standard library only."
+requires-python = ">=3.9"
+# None, deliberately: the module is deployed by copying one file.
+dependencies = []
 
 [project.scripts]
 fingerbot = "fingerbot:main"
@@ -18,7 +15,6 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 addopts = "--cov=fingerbot --cov-report=term-missing --cov-fail-under=100"
 
 [tool.coverage.run]
@@ -32,6 +28,9 @@ search-path = ["src", "tests"]
 
 [tool.ruff]
 line-length = 100
+# The module must run on any python3 >= 3.9 (it is deployed by copying one
+# file), so lint against 3.9 semantics: no zip(strict=), no match, etc.
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "RUF"]
@@ -39,11 +38,13 @@ select = ["E", "F", "W", "I", "B", "UP", "RUF"]
 [dependency-groups]
 dev = [
     "pyrefly>=1.2.0,<2",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
-    "pytest-cov>=7.1.0",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
     "ruff>=0.16.3",
     "ty>=0.0.72,<0.1",
+    # Cross-check references for the stdlib AES and Tuya codec. Never runtime.
+    "pycryptodome>=3.23.0",
+    "tuya-ble>=0.1.0; python_version >= '3.10'",
 ]
 
 [project.urls]
