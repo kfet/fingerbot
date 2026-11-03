@@ -1,6 +1,6 @@
 [project]
 name = "fingerbot"
-version = "0.2.1"
+version = "0.3.0"
 description = "Press a Tuya Fingerbot over BLE. One command, no arguments, standard library only."
 requires-python = ">=3.9"
 # None, deliberately: the module is deployed by copying one file.
